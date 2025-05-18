@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv/
+.python-version
+
+# Flask instance folder
+instance/
+
+# Flask cache or other runtime files
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# VS Code or PyCharm settings
+.vscode/
+.idea/
+
+# Test coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.xml
+*.cover
+*.py,cover
+.cache
+nosetests.xml
+coverage.xml
+*.log
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# Environment variables
+.env
+.env.*
+
+# Deployment artifacts
+*.egg-info/
+.eggs/
+*.bak
+
+# Mac/Linux system files
+.DS_Store
+Thumbs.db

@@ -56,3 +56,6 @@ build/
 # Mac/Linux system files
 .DS_Store
 Thumbs.db
+
+# Dataset folder path
+/ravdess_data

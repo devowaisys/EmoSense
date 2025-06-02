@@ -1,5 +1,5 @@
-import queue
 
+import queue
 import librosa
 import numpy as np
 import sounddevice as sd
@@ -13,54 +13,76 @@ class AudioAnalysis:
         self.audio_queue = queue.Queue()
         self.is_recording = False
 
-    def extract_features(self, audio_data, sr=None):
-        """Extract advanced audio features for deep learning"""
+    def extract_enhanced_features(self, audio_input, sr=22050):
+        """Enhanced feature extraction - handles both file paths and audio data"""
         try:
-            # If audio_data is a file path
-            if isinstance(audio_data, str):
-                y, sr = librosa.load(audio_data, duration=3, offset=0.5)
+            # Handle both file paths and audio data
+            if isinstance(audio_input, str):
+                audio_data, sr = librosa.load(audio_input, sr=sr)
             else:
-                y = audio_data
-                if sr is None:
-                    sr = self.sample_rate
+                audio_data = audio_input
 
-            # More comprehensive feature extraction for deep learning
+            # Ensure audio is 1D
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
+
+            # Skip if audio is too short
+            if len(audio_data) < 1024:
+                return None
+
             features = []
 
-            # 1. MFCC
-            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-            mfcc_scaled = np.mean(mfcc.T, axis=0)
-            features.extend(mfcc_scaled)
+            # 1. MFCC features (most important for emotion) - with error handling
+            try:
+                mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13, window='hann')
+            except:
+                # Fallback without window parameter
+                mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
 
-            # 2. Pitch
-            pitch, _ = librosa.piptrack(y=y, sr=sr)
-            pitch_features = [
-                np.mean(pitch),
-                np.std(pitch),
-                np.max(pitch),
-                np.min(pitch)
-            ]
-            features.extend(pitch_features)
+            features.extend([
+                np.mean(mfccs, axis=1),
+                np.std(mfccs, axis=1),
+                np.max(mfccs, axis=1),
+                np.min(mfccs, axis=1)
+            ])
 
-            # 3. Energy and Spectral Features
-            rmse = librosa.feature.rms(y=y)
-            spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
-            spectral_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)
-            spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
+            # 2. Spectral features (critical for emotion detection)
+            spectral_centroids = librosa.feature.spectral_centroid(y=audio_data, sr=sr)[0]
+            spectral_rolloff = librosa.feature.spectral_rolloff(y=audio_data, sr=sr)[0]
+            spectral_bandwidth = librosa.feature.spectral_bandwidth(y=audio_data, sr=sr)[0]
+            zero_crossing_rate = librosa.feature.zero_crossing_rate(audio_data)[0]
 
-            spectral_features = [
-                np.mean(rmse),
-                np.mean(spectral_centroid),
-                np.mean(spectral_bandwidth),
-                np.mean(spectral_rolloff)
-            ]
-            features.extend(spectral_features)
+            features.extend([
+                [np.mean(spectral_centroids), np.std(spectral_centroids)],
+                [np.mean(spectral_rolloff), np.std(spectral_rolloff)],
+                [np.mean(spectral_bandwidth), np.std(spectral_bandwidth)],
+                [np.mean(zero_crossing_rate), np.std(zero_crossing_rate)]
+            ])
 
-            # 4. Zero Crossing Rate
-            zcr = librosa.feature.zero_crossing_rate(y)
-            features.append(np.mean(zcr))
+            # 3. Chroma features (for tonal content) - with error handling
+            try:
+                chroma = librosa.feature.chroma_stft(y=audio_data, sr=sr)
+                features.append([np.mean(chroma), np.std(chroma)])
+            except:
+                # Fallback with default values
+                features.append([0.5, 0.1])
 
-            return np.array(features)
+            # 4. Tempo and rhythm (important for emotional state) - with error handling
+            try:
+                tempo, _ = librosa.beat.beat_track(y=audio_data, sr=sr)
+                features.append([tempo])
+            except:
+                # Default tempo if beat tracking fails
+                features.append([120.0])
+
+            # 5. Energy and power features
+            rms = librosa.feature.rms(y=audio_data)[0]
+            features.append([np.mean(rms), np.std(rms)])
+
+            # Flatten all features
+            feature_vector = np.concatenate([np.array(f).flatten() for f in features])
+
+            return feature_vector
 
         except Exception as e:
             print(f"Error extracting features: {str(e)}")

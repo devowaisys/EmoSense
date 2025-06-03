@@ -70,7 +70,7 @@ class EmoSenseApp:
     def _register_routes(self) -> None:
         """Register all API routes."""
         # Basic routes
-        self.app.route('/')(self.index)
+        self.app.route('/')(self.test)
         self.app.route('/health', methods=['GET'])(self.health_check)
 
         # Therapist routes
@@ -108,8 +108,8 @@ class EmoSenseApp:
         return [field for field in required_fields if field not in data]
 
     # Route handler methods
-    def index(self) -> str:
-        return 'EmoSense Server is up and running!'
+    def test(self) -> str:
+        return 'EmoSense Server Up & Running!'
 
     def add_therapist(self) -> Tuple[Response, int]:
         data = request.get_json()

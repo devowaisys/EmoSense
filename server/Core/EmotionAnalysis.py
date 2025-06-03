@@ -21,11 +21,9 @@ from Core.AudioAnalysis import AudioAnalysis
 from Operation.Patient import Patient
 from Operation.Therapist import Therapist
 
-
 # Suppress TensorFlow warnings
 tf.get_logger().setLevel('ERROR')
 warnings.filterwarnings('ignore')
-
 
 
 class EmotionAnalysis:
@@ -216,8 +214,6 @@ class EmotionAnalysis:
         )
         return model
 
-        # Combined and optimized training method
-
     def train_model(self, X, y):
         """Enhanced training with better data preprocessing and validation"""
         try:
@@ -321,8 +317,9 @@ class EmotionAnalysis:
             predicted_class_index = np.argmax(probabilities)
             predicted_emotion = self.label_encoder.classes_[predicted_class_index]
 
+            # Adjusted confidence threshold - was too restrictive
             max_confidence = np.max(probabilities)
-            if max_confidence < 0.3:
+            if max_confidence < 0.2:  # Lowered from 0.3
                 predicted_emotion = 'neutral'
 
             result = {
@@ -340,44 +337,65 @@ class EmotionAnalysis:
             print(f"Error processing audio chunk: {str(e)}")
             return None
 
-    def save_model(self, path=r'C:\Users\Owais\PycharmProjects\EmoSense-server\Core\therapy_emotion_model.h5'):
+    def save_model(self, path=r'C:\Users\Owais\GitHub\EmoSense\server\Core\therapy_emotion_model.h5'):
         """Save the trained TensorFlow model"""
         try:
             if self.model is None:
                 raise ValueError("No trained model to save!")
 
             self.model.save(path)
-            joblib.dump(self.label_encoder, r'C:\Users\Owais\PycharmProjects\EmoSense-server\Core\label_encoder.joblib')
+            joblib.dump(self.label_encoder, r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib')
+
+            # Save scaler parameters
+            scaler_data = {
+                'scaler_mean': self.scaler_mean,
+                'scaler_std': self.scaler_std
+            }
+            joblib.dump(scaler_data, r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib')
+
             print(f"Model saved successfully to {path}")
         except Exception as e:
             print(f"Error saving model: {str(e)}")
 
-    def load_model(self, path=r'C:\Users\Owais\PycharmProjects\EmoSense-server\Core\therapy_emotion_model.h5'):
+    def load_model(self, path=r'C:\Users\Owais\GitHub\EmoSense\server\Core\therapy_emotion_model.h5'):
         """Load a trained TensorFlow model"""
         try:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Model file not found: {path}")
 
             self.model = tf.keras.models.load_model(path)
-            encoder_path = r'C:\Users\Owais\PycharmProjects\EmoSense-server\Core\label_encoder.joblib'
+            encoder_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib'
 
             if os.path.exists(encoder_path):
                 self.label_encoder = joblib.load(encoder_path)
+
+            # Load scaler parameters
+            scaler_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\scaler_data.joblib'
+            if os.path.exists(scaler_path):
+                scaler_data = joblib.load(scaler_path)
+                self.scaler_mean = scaler_data['scaler_mean']
+                self.scaler_std = scaler_data['scaler_std']
 
             print("Model loaded successfully")
         except Exception as e:
             print(f"Error loading model: {str(e)}")
             self.model = None
 
-    def _analyze_audio_with_chunks(self, audio_data, sr, chunk_duration=3.0, overlap=0.5):
-        """Common method for chunked audio analysis"""
+    def _analyze_audio_with_chunks(self, audio_data, sr, chunk_duration=2.5, overlap=0.3):
+        """Improved chunked audio analysis with better parameters"""
         chunk_samples = int(chunk_duration * sr)
         hop_samples = int(chunk_samples * (1 - overlap))
         results = []
 
+        # Normalize audio data to prevent scaling issues
+        if np.max(np.abs(audio_data)) > 0:
+            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.9
+
         for i in range(0, len(audio_data) - chunk_samples, hop_samples):
             chunk = audio_data[i:i + chunk_samples]
-            if np.max(np.abs(chunk)) > 0.01:  # Skip quiet segments
+
+            # More lenient threshold for chunk acceptance
+            if np.max(np.abs(chunk)) > 0.005:  # Lowered from 0.01
                 result = self.process_audio_chunk(chunk)
                 if result:
                     results.append(result)
@@ -461,7 +479,7 @@ class EmotionAnalysis:
                     break
 
     def analyze_prerecorded_audio(self, audio_path):
-        """Analyze prerecorded audio file"""
+        """Analyze prerecorded audio file with improved processing"""
         try:
             if self.model is None:
                 raise ValueError("Model not trained! Please train the model first.")
@@ -469,7 +487,23 @@ class EmotionAnalysis:
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
             self.start_session()
+
+            # Load audio with proper duration handling
             y, sr = librosa.load(audio_path, sr=22050, duration=None)
+
+            # Apply audio preprocessing
+            # Remove DC offset
+            y = y - np.mean(y)
+
+            # Apply gentle normalization
+            if np.max(np.abs(y)) > 0:
+                y = y / np.max(np.abs(y)) * 0.8
+
+            # Apply gentle high-pass filter to remove low-frequency noise
+            from scipy.signal import butter, filtfilt
+            b, a = butter(5, 300 / (sr / 2), btype='high')
+            y = filtfilt(b, a, y)
+
             results = self._analyze_audio_with_chunks(y, sr)
             self.end_session()
 
@@ -575,7 +609,7 @@ def main():
         analyzer = EmotionAnalysis(patient=john_pat, therapist=kevin)
 
         # Check for pre-trained model
-        model_path = r'C:\Users\Owais\PycharmProjects\EmoSense-server\Core\therapy_emotion_model.h5'
+        model_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\therapy_emotion_model.h5'
         if os.path.exists(model_path):
             print("Loading pre-trained model...")
             analyzer.load_model()
@@ -667,7 +701,6 @@ def main():
         print(f"\nAn error occurred: {str(e)}")
     finally:
         keyboard.unhook_all()
-
 
 if __name__ == "__main__":
     main()

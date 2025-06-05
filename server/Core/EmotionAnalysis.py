@@ -46,9 +46,9 @@ class EmotionAnalysis:
         self.patient_email = patient.email if patient else None
         self.therapist_id = therapist.therapist_id if therapist else None
 
-    def extract_enhanced_features(self, audio_input, sr=22050):
+    def extract_features(self, audio_input, sr=22050):
         """Use the AudioAnalysis class method to maintain consistency"""
-        return self.audio_analyzer.extract_enhanced_features(audio_input, sr)
+        return self.audio_analyzer.extract_features(audio_input, sr)
 
     def start_session(self):
         """Initialize a new session"""
@@ -168,7 +168,7 @@ class EmotionAnalysis:
                     if emotion_code in self.emotions:
                         emotion = self.emotions[emotion_code]
                         file_path = os.path.join(actor_path, filename)
-                        feature_vector = self.extract_enhanced_features(file_path)
+                        feature_vector = self.extract_features(file_path)
 
                         if feature_vector is not None:
                             features.append(feature_vector)
@@ -283,8 +283,8 @@ class EmotionAnalysis:
             print(f"Error training model: {str(e)}")
             return None
 
-    def process_audio_chunk(self, audio_chunk):
-        """Enhanced audio processing with better preprocessing"""
+    def process_audio_chunk(self, audio_chunk, sample_rate=None):
+        """Enhanced audio processing with better preprocessing for client data"""
         try:
             if self.model is None:
                 raise ValueError("Model not trained! Please train the model first.")
@@ -295,19 +295,56 @@ class EmotionAnalysis:
             else:
                 audio_data = audio_chunk.flatten()
 
+            # Handle different input types
+            if audio_data.dtype != np.float32:
+                if audio_data.dtype == np.int16:
+                    audio_data = audio_data.astype(np.float32) / 32768.0
+                elif audio_data.dtype == np.int32:
+                    audio_data = audio_data.astype(np.float32) / 2147483648.0
+                else:
+                    audio_data = audio_data.astype(np.float32)
+
+            # Ensure proper range [-1, 1]
+            if np.max(np.abs(audio_data)) > 1.0:
+                audio_data = audio_data / np.max(np.abs(audio_data))
+
             # Skip if audio is too short or too quiet
-            if len(audio_data) < 1024 or np.max(np.abs(audio_data)) < 0.01:
+            if len(audio_data) < 1024:
+                print(f"Audio chunk too short: {len(audio_data)} samples")
                 return None
+
+            if np.max(np.abs(audio_data)) < 0.005:
+                print(f"Audio chunk too quiet: max amplitude {np.max(np.abs(audio_data))}")
+                return None
+
+            # Resample to model's expected sample rate (22050 Hz)
+            target_sr = 22050
+            if sample_rate and sample_rate != target_sr:
+                audio_data = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=target_sr)
+
+            # Apply the same preprocessing as training data
+            # Remove DC offset
+            audio_data = audio_data - np.mean(audio_data)
+
+            # Apply gentle high-pass filter to remove low-frequency noise
+            try:
+                from scipy.signal import butter, filtfilt
+                b, a = butter(5, 300 / (target_sr / 2), btype='high')
+                audio_data = filtfilt(b, a, audio_data)
+            except:
+                pass  # Skip filtering if scipy is not available
 
             # Extract features
-            features = self.extract_enhanced_features(audio_data)
+            features = self.extract_features(audio_data, sr=target_sr)
             if features is None:
+                print("Feature extraction failed")
                 return None
 
-            # Apply normalization
+            # Apply normalization (same as training)
             if hasattr(self, 'scaler_mean') and hasattr(self, 'scaler_std'):
                 features = (features - self.scaler_mean) / self.scaler_std
             else:
+                # Fallback normalization
                 features = (features - np.mean(features)) / (np.std(features) + 1e-8)
 
             features = features.reshape(1, -1)
@@ -317,9 +354,9 @@ class EmotionAnalysis:
             predicted_class_index = np.argmax(probabilities)
             predicted_emotion = self.label_encoder.classes_[predicted_class_index]
 
-            # Adjusted confidence threshold - was too restrictive
+            # Confidence threshold
             max_confidence = np.max(probabilities)
-            if max_confidence < 0.2:  # Lowered from 0.3
+            if max_confidence < 0.25:  # Slightly higher threshold for web data
                 predicted_emotion = 'neutral'
 
             result = {
@@ -335,6 +372,10 @@ class EmotionAnalysis:
 
         except Exception as e:
             print(f"Error processing audio chunk: {str(e)}")
+            print(f"Audio shape: {audio_chunk.shape if hasattr(audio_chunk, 'shape') else 'No shape'}")
+            print(f"Audio dtype: {audio_chunk.dtype if hasattr(audio_chunk, 'dtype') else 'No dtype'}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def save_model(self, path=r'C:\Users\Owais\GitHub\EmoSense\server\Core\therapy_emotion_model.h5'):
@@ -344,14 +385,19 @@ class EmotionAnalysis:
                 raise ValueError("No trained model to save!")
 
             self.model.save(path)
-            joblib.dump(self.label_encoder, r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib')
 
-            # Save scaler parameters
-            scaler_data = {
-                'scaler_mean': self.scaler_mean,
-                'scaler_std': self.scaler_std
-            }
-            joblib.dump(scaler_data, r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib')
+            # Save label encoder to separate file
+            encoder_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib'
+            joblib.dump(self.label_encoder, encoder_path)
+
+            # Save scaler parameters to separate file
+            if hasattr(self, 'scaler_mean') and hasattr(self, 'scaler_std'):
+                scaler_data = {
+                    'scaler_mean': self.scaler_mean,
+                    'scaler_std': self.scaler_std
+                }
+                scaler_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\scaler_data.joblib'
+                joblib.dump(scaler_data, scaler_path)
 
             print(f"Model saved successfully to {path}")
         except Exception as e:
@@ -364,17 +410,23 @@ class EmotionAnalysis:
                 raise FileNotFoundError(f"Model file not found: {path}")
 
             self.model = tf.keras.models.load_model(path)
+            # Load label encoder
             encoder_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\label_encoder.joblib'
-
             if os.path.exists(encoder_path):
                 self.label_encoder = joblib.load(encoder_path)
+                print(f"Label encoder loaded with classes: {self.label_encoder.classes_}")
+            else:
+                print("Warning: Label encoder file not found")
 
-            # Load scaler parameters
+            # Load scaler parameters from separate file
             scaler_path = r'C:\Users\Owais\GitHub\EmoSense\server\Core\scaler_data.joblib'
             if os.path.exists(scaler_path):
                 scaler_data = joblib.load(scaler_path)
                 self.scaler_mean = scaler_data['scaler_mean']
                 self.scaler_std = scaler_data['scaler_std']
+                print("Scaler parameters loaded successfully")
+            else:
+                print("Warning: Scaler data file not found")
 
             print("Model loaded successfully")
         except Exception as e:
@@ -486,12 +538,14 @@ class EmotionAnalysis:
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+            print(f"Starting analysis of: {audio_path}")
             self.start_session()
 
             # Load audio with proper duration handling
             y, sr = librosa.load(audio_path, sr=22050, duration=None)
+            print(f"Loaded audio: {len(y)} samples at {sr} Hz ({len(y) / sr:.2f} seconds)")
 
-            # Apply audio preprocessing
+            # Apply the same preprocessing as training data
             # Remove DC offset
             y = y - np.mean(y)
 
@@ -500,30 +554,41 @@ class EmotionAnalysis:
                 y = y / np.max(np.abs(y)) * 0.8
 
             # Apply gentle high-pass filter to remove low-frequency noise
-            from scipy.signal import butter, filtfilt
-            b, a = butter(5, 300 / (sr / 2), btype='high')
-            y = filtfilt(b, a, y)
+            try:
+                from scipy.signal import butter, filtfilt
+                b, a = butter(5, 300 / (sr / 2), btype='high')
+                y = filtfilt(b, a, y)
+            except ImportError:
+                print("Warning: scipy not available, skipping filtering")
 
             results = self._analyze_audio_with_chunks(y, sr)
             self.end_session()
+
+            print(f"Analysis completed: {len(results)} chunks processed")
 
             if not results:
                 return {'status': 'error', 'message': 'No valid audio segments found for analysis'}
 
             summary = self.generate_session_summary()
-            summary_description = self.generate_summary_description(summary)
-            summary['summary_description'] = summary_description
-            save_result = self.save_session_analysis("pre-recorded")
+            if summary['status'] == 'success':
+                summary_description = self.generate_summary_description(summary)
+                summary['summary_description'] = summary_description
+                save_result = self.save_session_analysis("pre-recorded")
 
-            return {
-                'status': 'success',
-                'message': 'Audio analysis completed successfully',
-                'summary': summary,
-                'emotions': results,
-                'save_result': save_result
-            }
+                return {
+                    'status': 'success',
+                    'message': 'Audio analysis completed successfully',
+                    'summary': summary,
+                    'emotions': results,
+                    'save_result': save_result
+                }
+            else:
+                return {'status': 'error', 'message': 'Failed to generate summary'}
 
         except Exception as e:
+            print(f"Error in analyze_prerecorded_audio: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
     def save_session_analysis(self, analysis_mode):

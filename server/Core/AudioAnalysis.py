@@ -96,7 +96,7 @@ class AudioAnalysis:
         self.audio_queue = queue.Queue()
         self.is_recording = False
 
-    def extract_enhanced_features(self, audio_input, sr=22050):
+    def extract_features(self, audio_input, sr=22050):
         """Enhanced feature extraction - handles both file paths and audio data"""
         try:
             # Handle both file paths and audio data

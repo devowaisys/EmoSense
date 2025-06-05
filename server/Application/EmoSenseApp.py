@@ -671,7 +671,7 @@ class EmoSenseApp:
         return None
 
     def _process_audio_chunk(self, session_id: str, audio_data: str) -> Optional[Dict[str, Any]]:
-        """Process an audio chunk for emotion analysis"""
+        """Process an audio chunk for emotion analysis with improved handling"""
         if session_id not in self.active_sessions:
             return None
 
@@ -679,30 +679,25 @@ class EmoSenseApp:
             # Decode base64 string to bytes
             audio_bytes = base64.b64decode(audio_data)
 
-            # Convert to numpy array (16-bit PCM)
+            # Convert to numpy array (assuming 16-bit PCM from frontend)
             audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
 
-            # Convert to float32 between -1 and 1
-            audio_float = audio_array.astype(np.float32) / 32768.0
-
-            if len(audio_float) == 0:
+            if len(audio_array) == 0:
                 return None
 
-            # Resample if needed (example: to 22050Hz)
-            target_sr = 22050
-            if hasattr(self.analyzer.audio_analyzer, 'sample_rate'):
-                target_sr = self.analyzer.audio_analyzer.sample_rate
+            print(f"Received audio chunk: {len(audio_array)} samples")
 
-            if target_sr != 16000:  # Only resample if needed
-                audio_float = librosa.resample(audio_float, orig_sr=16000, target_sr=target_sr)
-
-            result = self.analyzer.process_audio_chunk(audio_float)
+            # Pass the sample rate to the emotion analyzer
+            result = self.analyzer.process_audio_chunk(audio_array, sample_rate=16000)
             if result:
                 self.active_sessions[session_id]['analysis_results'].append(result)
+                print(f"Analysis result: {result['predicted_emotion']} (confidence: {result['max_confidence']:.2f})")
             return result
 
         except Exception as e:
             print(f"Error processing audio chunk: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _register_websocket_handlers(self) -> None:

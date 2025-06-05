@@ -9,7 +9,6 @@ import joblib
 import keyboard
 import librosa
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
